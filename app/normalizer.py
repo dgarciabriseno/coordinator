@@ -35,8 +35,20 @@ def normalize_hpc(x: float, y: float, coord_time: Time, target: Time) -> SkyCoor
         with SphericalScreen(hv_frame.observer, only_off_disk=True):
             return solar_rotate_coordinate(real_coord, hv_frame.observer)
 
+def skycoord_to_3dframe(coord: SkyCoord) -> SkyCoord:
+    """
+    Accepts a SkyCoord and transforms it to
+    hv's unified coordinate frame
 
-def gse_frame(x: float, y: float, z: float, time: Time) -> SkyCoord:
+    Parameters
+    ----------
+    coord: SkyCoord
+    """
+    with transform_with_sun_center():
+        return coord.transform_to(get_3d_frame())
+
+
+def gse_frame(x: float, y: float, z: float, time: Time) -> dict:
     """
     Accepts a Geocentric Solar Ecliptic system coordinate and transforms it to
     hv's unified coordinate frame
@@ -52,38 +64,30 @@ def gse_frame(x: float, y: float, z: float, time: Time) -> SkyCoord:
     time: Time
         Coordinate time
     """
-    with transform_with_sun_center():
-        real_coord = GeocentricSolarEcliptic(
-            x * u.km, y * u.km, z * u.km, obstime=time, representation_type="cartesian"
-        )
-        coord = real_coord.transform_to(get_3d_frame())
-        coord.representation_type = "cartesian"
-        return {
-            "x": coord.x.value,
-            "y": coord.y.value,
-            "z": coord.z.value,
-            "time": str(time),
-        }
-
+    real_coord = GeocentricSolarEcliptic(
+        x * u.km, y * u.km, z * u.km, obstime=time, representation_type="cartesian"
+    )
+    return _normalize_skycoord(real_coord)
 
 def jsonify_skycoord(coord: SkyCoord) -> list:
     """
-    Converts the skycoord to a dict in kilometers
+    Converts the skycoord to a dict in kilometers after transforming it into
+    the standard 3D frame.
     """
-    with transform_with_sun_center():
-        return list(map(_normalize_skycoord, coord))
+    return list(map(_normalize_skycoord, coord))
 
 
 def _normalize_skycoord(coord: SkyCoord) -> dict:
     """
     Converts a skycoord to a normalized x,y,z,time dict.
     """
-    time = coord.obstime
-    reframed = coord.transform_to(get_3d_frame())
-    reframed.representation_type = "cartesian"
-    return {
-        "x": reframed.x.to("km"),
-        "y": reframed.y.to("km"),
-        "z": reframed.z.to("km"),
-        "time": time,
-    }
+    with transform_with_sun_center():
+        time = coord.obstime
+        reframed = coord.transform_to(get_3d_frame())
+        reframed.representation_type = "cartesian"
+        return {
+            "x": reframed.x.to("km").value,
+            "y": reframed.y.to("km").value,
+            "z": reframed.z.to("km").value,
+            "time": str(time)
+        }

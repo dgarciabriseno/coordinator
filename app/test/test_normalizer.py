@@ -34,4 +34,4 @@ def test_jsonify_skycoord():
     assert len(result) == 13
     # Asset there is a coordinate for each time point between start and end.
     for i, coord in enumerate(result):
-        assert coord["time"] == start + TimeDelta(i * u.hour)
+        assert coord["time"] == str(start + TimeDelta(i * u.hour))
