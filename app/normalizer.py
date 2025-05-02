@@ -91,5 +91,5 @@ def _normalize_skycoord(coord: SkyCoord) -> dict:
             "x": reframed.x.to("km").value,
             "y": reframed.y.to("km").value,
             "z": reframed.z.to("km").value,
-            "time": str(time)
+            "time": str(time),
         }
