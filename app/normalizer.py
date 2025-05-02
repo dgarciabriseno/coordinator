@@ -35,6 +35,7 @@ def normalize_hpc(x: float, y: float, coord_time: Time, target: Time) -> SkyCoor
         with SphericalScreen(hv_frame.observer, only_off_disk=True):
             return solar_rotate_coordinate(real_coord, hv_frame.observer)
 
+
 def skycoord_to_3dframe(coord: SkyCoord) -> SkyCoord:
     """
     Accepts a SkyCoord and transforms it to
@@ -68,6 +69,7 @@ def gse_frame(x: float, y: float, z: float, time: Time) -> dict:
         x * u.km, y * u.km, z * u.km, obstime=time, representation_type="cartesian"
     )
     return _normalize_skycoord(real_coord)
+
 
 def jsonify_skycoord(coord: SkyCoord) -> list:
     """

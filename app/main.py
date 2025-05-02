@@ -82,13 +82,16 @@ def _normalize_gse(params: GSEInput):
     coords = map(lambda c: gse_frame(c.x, c.y, c.z, c.time), params.coordinates)
     return {"coordinates": list(coords)}
 
+
 class PositionInput(HvBaseModel):
     start: AstropyTime
     stop: AstropyTime
 
+
 @app.get("/position/{observatory}")
 def _get_position(observatory: str, start: AstropyTime, stop: AstropyTime):
-    return jsonify_skycoord(get_position(observatory, start, stop))
+    return {"coordinates": jsonify_skycoord(get_position(observatory, start, stop))}
+
 
 @app.get("/health-check", include_in_schema=False)
 def health_check():
