@@ -1,3 +1,4 @@
+from typing import List, Dict
 from astropy.coordinates import SkyCoord
 from astropy.time import Time
 import astropy.units as u
@@ -34,6 +35,42 @@ def normalize_hpc(x: float, y: float, coord_time: Time, target: Time) -> SkyCoor
         hv_frame = get_helioviewer_frame(target)
         with SphericalScreen(hv_frame.observer, only_off_disk=True):
             return solar_rotate_coordinate(real_coord, hv_frame.observer)
+
+
+def normalize_hpc_batch(coordinates: List[Dict], target: Time) -> List[Dict]:
+    """
+    Batch process multiple HPC coordinate normalizations
+
+    Parameters
+    ----------
+    coordinates : List[Dict]
+        List of coordinate dictionaries with keys: x, y, coord_time
+    target : Time
+        Target observation time (same for all coordinates)
+
+    Returns
+    -------
+    List[Dict]
+        List of results with keys: x, y
+    """
+    if not coordinates:
+        return []
+
+    hv_frame = get_helioviewer_frame(target)
+
+    with transform_with_sun_center():
+        xs = [c["x"] for c in coordinates]
+        ys = [c["y"] for c in coordinates]
+        coord_times = [c["coord_time"] for c in coordinates]
+        real_coord = SkyCoord(
+            xs,
+            ys,
+            unit="arcsec,arcsec",
+            frame=get_earth_frame(coord_times),
+        )
+        with SphericalScreen(hv_frame.observer, only_off_disk=True):
+            result = solar_rotate_coordinate(real_coord, hv_frame.observer)
+    return [{"x": c.Tx.value.item(), "y": c.Ty.value.item()} for c in result]
 
 
 def skycoord_to_3dframe(coord: SkyCoord) -> SkyCoord:
