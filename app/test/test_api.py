@@ -1,4 +1,6 @@
 import pytest
+import random
+import math
 from astropy import units as u
 from fastapi.testclient import TestClient
 from sunpy.coordinates import get_earth
@@ -47,6 +49,175 @@ def test_hpc(client: TestClient):
     assert 9 < coord["x"] and coord["x"] < 10
 
 
+def test_hpc_post(client: TestClient):
+    """
+    Test POST /hpc endpoint with batch coordinate normalization
+    """
+    # Test valid batch request using RHESSI Flare 12070596
+    batch_data = {
+        "coordinates": [
+            {"x": 515, "y": -342, "coord_time": "2012-07-05T13:01:46"},
+            {"x": 100, "y": 200, "coord_time": "2012-07-05T13:02:00"},
+        ],
+        "target": "2012-07-05T13:01:46",
+    }
+    response = client.post("/hpc", json=batch_data)
+    assert response.status_code == 200
+    data = response.json()
+    assert "coordinates" in data
+    assert len(data["coordinates"]) == 2
+    # First coordinate should match the known RHESSI flare result
+    assert pytest.approx(data["coordinates"][0]["x"], abs=0.1) == 523.6178
+    assert pytest.approx(data["coordinates"][0]["y"], abs=0.1) == -347.7228
+
+    # Test with differential rotation (target time different from coord_time)
+    batch_data = {
+        "coordinates": [
+            {"x": 0, "y": 0, "coord_time": "2012-01-01T00:00:00"},
+        ],
+        "target": "2012-01-01T01:00:00",
+    }
+    response = client.post("/hpc", json=batch_data)
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["coordinates"]) == 1
+    # The x coordinate should move approximately 9 arcseconds
+    assert 9 < data["coordinates"][0]["x"] and data["coordinates"][0]["x"] < 10
+
+    # Test missing coordinates field
+    response = client.post("/hpc", json={"target": "2012-01-01T00:00:00Z"})
+    assert response.status_code == 422
+
+    # Test missing target field
+    response = client.post(
+        "/hpc",
+        json={"coordinates": [{"x": 0, "y": 0, "coord_time": "2012-01-01T00:00:00Z"}]},
+    )
+    assert response.status_code == 422
+
+    # Test invalid time format
+    batch_data = {
+        "coordinates": [{"x": 0, "y": 0, "coord_time": "NotAValidTime"}],
+        "target": "2012-01-01T00:00:00Z",
+    }
+    response = client.post("/hpc", json=batch_data)
+    assert response.status_code == 422
+
+    # Test empty coordinates array
+    batch_data = {"coordinates": [], "target": "2012-01-01T00:00:00Z"}
+    response = client.post("/hpc", json=batch_data)
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["coordinates"]) == 0
+
+    # Test multiple coordinates with different coord_times
+    batch_data = {
+        "coordinates": [
+            {"x": 100, "y": 200, "coord_time": "2024-01-01T00:00:00"},
+            {"x": -300, "y": 450, "coord_time": "2025-01-01T00:00:00"},
+            {"x": 500, "y": -100, "coord_time": "2022-01-01T00:00:00"},
+        ],
+        "target": "2024-01-02T00:00:00",
+    }
+    response = client.post("/hpc", json=batch_data)
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["coordinates"]) == 3
+    # Verify all coordinates have x and y values
+    for coord in data["coordinates"]:
+        assert "x" in coord
+        assert "y" in coord
+        assert isinstance(coord["x"], (int, float))
+        assert isinstance(coord["y"], (int, float))
+
+    # Test batch results match individual GET results
+    batch_data = {
+        "coordinates": [
+            {"x": 515, "y": -342, "coord_time": "2012-07-05T13:01:46"},
+        ],
+        "target": "2012-07-05T13:01:46",
+    }
+    batch_response = client.post("/hpc", json=batch_data)
+    individual_response = client.get(
+        "/hpc?x=515&y=-342&coord_time=2012-07-05T13:01:46&target=2012-07-05T13:01:46"
+    )
+    assert batch_response.status_code == 200
+    assert individual_response.status_code == 200
+    batch_coord = batch_response.json()["coordinates"][0]
+    individual_coord = individual_response.json()
+    assert pytest.approx(batch_coord["x"], abs=1e-10) == individual_coord["x"]
+    assert pytest.approx(batch_coord["y"], abs=1e-10) == individual_coord["y"]
+
+
+def test_hpc_single_vs_batched(client: TestClient):
+    """
+    Test that processing 100 random coordinates one-by-one gives the same
+    results as processing them all at once with the batch endpoint.
+    """
+    # Generate 100 random coordinates
+    num_coords = 100
+    random.seed(42)  # For reproducibility
+
+    # Set a common target time
+    target = "2020-01-01T00:00:00"
+
+    coordinates = []
+    for _ in range(num_coords):
+        x = random.uniform(-1000, 1000)
+        y = random.uniform(-1000, 1000)
+        # Use coord_time within 24 hours before target time
+        hours_before = random.uniform(0, 24)
+        from datetime import datetime, timedelta
+
+        target_dt = datetime.fromisoformat(target)
+        coord_dt = target_dt - timedelta(hours=hours_before)
+        coord_time = coord_dt.strftime("%Y-%m-%dT%H:%M:%S")
+
+        coordinates.append({"x": x, "y": y, "coord_time": coord_time})
+
+    # Process each coordinate individually using GET
+    individual_results = []
+    for i, coord in enumerate(coordinates):
+        response = client.get(
+            f"/hpc?x={coord['x']}&y={coord['y']}&coord_time={coord['coord_time']}&target={target}"
+        )
+        assert response.status_code == 200
+        result = response.json()
+        # Check for NaN values
+        assert not math.isnan(
+            result["x"]
+        ), f"Individual request {i} returned NaN for x (input: {coord})"
+        assert not math.isnan(
+            result["y"]
+        ), f"Individual request {i} returned NaN for y (input: {coord})"
+        individual_results.append(result)
+
+    # Process all coordinates at once using POST
+    batch_data = {"coordinates": coordinates, "target": target}
+    batch_response = client.post("/hpc", json=batch_data)
+    assert batch_response.status_code == 200
+    batch_results = batch_response.json()["coordinates"]
+
+    # Compare results
+    assert len(individual_results) == len(batch_results)
+    for i, (individual, batched) in enumerate(zip(individual_results, batch_results)):
+        # Check batch results for NaN
+        assert not math.isnan(
+            batched["x"]
+        ), f"Batch result {i} returned NaN for x (input: {coordinates[i]})"
+        assert not math.isnan(
+            batched["y"]
+        ), f"Batch result {i} returned NaN for y (input: {coordinates[i]})"
+
+        # Compare individual vs batch results
+        assert (
+            pytest.approx(individual["x"], abs=1e-10) == batched["x"]
+        ), f"Mismatch at index {i}: x values differ"
+        assert (
+            pytest.approx(individual["y"], abs=1e-10) == batched["y"]
+        ), f"Mismatch at index {i}: y values differ"
+
+
 def test_hgs2hpc(client: TestClient):
     # Missing lat
     response = client.get("/hgs2hpc?lon=0&coord_time=2012-01-01")
@@ -92,6 +263,117 @@ def test_hgs2hpc(client: TestClient):
     assert response.status_code == 422
     data = response.json()
     assert data["detail"][0]["loc"][1] == "lat"
+
+
+def test_hgs2hpc_post(client: TestClient):
+    """
+    Test POST /hgs2hpc endpoint with batch coordinate conversion
+    """
+    # Test valid batch request
+    batch_data = {
+        "coordinates": [
+            {"lat": 0.0, "lon": 0.0, "coord_time": "2012-01-01T00:00:00Z"},
+            {"lat": 10.0, "lon": 20.0, "coord_time": "2012-01-01T00:00:00Z"},
+        ],
+        "target": "2012-01-01T00:00:00Z",
+    }
+    response = client.post("/hgs2hpc", json=batch_data)
+    assert response.status_code == 200
+    data = response.json()
+    assert "coordinates" in data
+    assert len(data["coordinates"]) == 2
+    assert pytest.approx(data["coordinates"][0]["x"], abs=0.1) == 0
+    assert pytest.approx(data["coordinates"][0]["y"], abs=50) == 49.558
+    assert pytest.approx(data["coordinates"][1]["x"], abs=0.1) == 324.471
+    assert pytest.approx(data["coordinates"][1]["y"], abs=50) == 212.902
+
+    # Test with differential rotation (target time different from coord_time)
+    batch_data = {
+        "coordinates": [
+            {"lat": 0.0, "lon": 0.0, "coord_time": "2012-01-01T00:00:00Z"},
+        ],
+        "target": "2012-01-01T01:00:00Z",
+    }
+    response = client.post("/hgs2hpc", json=batch_data)
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["coordinates"]) == 1
+    # The x coordinate should move approximately 9 arcseconds
+    assert 9 < data["coordinates"][0]["x"] and data["coordinates"][0]["x"] < 10
+
+    # Test missing coordinates field
+    response = client.post("/hgs2hpc", json={"target": "2012-01-01T00:00:00Z"})
+    assert response.status_code == 422
+
+    # Test missing target field
+    response = client.post(
+        "/hgs2hpc",
+        json={
+            "coordinates": [
+                {"lat": 0.0, "lon": 0.0, "coord_time": "2012-01-01T00:00:00Z"}
+            ]
+        },
+    )
+    assert response.status_code == 422
+
+    # Test invalid latitude (> 90)
+    batch_data = {
+        "coordinates": [
+            {"lat": 90.1, "lon": 0.0, "coord_time": "2012-01-01T00:00:00Z"}
+        ],
+        "target": "2012-01-01T00:00:00Z",
+    }
+    response = client.post("/hgs2hpc", json=batch_data)
+    assert response.status_code == 422
+    data = response.json()
+    assert data["detail"][0]["loc"][-1] == "lat"
+
+    # Test invalid latitude (< -90)
+    batch_data = {
+        "coordinates": [
+            {"lat": -90.1, "lon": 0.0, "coord_time": "2012-01-01T00:00:00Z"}
+        ],
+        "target": "2012-01-01T00:00:00Z",
+    }
+    response = client.post("/hgs2hpc", json=batch_data)
+    assert response.status_code == 422
+    data = response.json()
+    assert data["detail"][0]["loc"][-1] == "lat"
+
+    # Test invalid time format
+    batch_data = {
+        "coordinates": [{"lat": 0.0, "lon": 0.0, "coord_time": "NotAValidTime"}],
+        "target": "2012-01-01T00:00:00Z",
+    }
+    response = client.post("/hgs2hpc", json=batch_data)
+    assert response.status_code == 422
+
+    # Test empty coordinates array
+    batch_data = {"coordinates": [], "target": "2012-01-01T00:00:00Z"}
+    response = client.post("/hgs2hpc", json=batch_data)
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["coordinates"]) == 0
+
+    # Test multiple coordinates with different coord_times
+    batch_data = {
+        "coordinates": [
+            {"lat": 11.0, "lon": 21.0, "coord_time": "2024-01-01T00:00:00"},
+            {"lat": 15.0, "lon": 26.0, "coord_time": "2025-01-01T00:00:00"},
+            {"lat": 11.0, "lon": 21.0, "coord_time": "2022-01-01T00:00:00"},
+        ],
+        "target": "2024-01-02T00:00:00",
+    }
+    response = client.post("/hgs2hpc", json=batch_data)
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["coordinates"]) == 3
+    # Verify all coordinates have x and y values
+    for coord in data["coordinates"]:
+        assert "x" in coord
+        assert "y" in coord
+        assert isinstance(coord["x"], (int, float))
+        assert isinstance(coord["y"], (int, float))
 
 
 def test_healthcheck(client: TestClient):
@@ -145,7 +427,7 @@ def test_gse_errors(client: TestClient):
     assert response.status_code == 422
 
     # Test invalid JSON
-    response = client.post("/gse2frame", data=b"invalid json")
+    response = client.post("/gse2frame", content=b"invalid json")
     assert response.status_code == 422
 
     # Test missing required field

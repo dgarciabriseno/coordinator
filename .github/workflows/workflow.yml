@@ -1,10 +1,6 @@
-name: Test and Deploy
+name: Test and Build
 
 on:
-  push:
-    branches: [ "main" ]
-    tags:
-      - v**
   pull_request:
     branches: [ "main" ]
 
@@ -32,67 +28,68 @@ jobs:
       run: black --check .
 
 
-  # Run python tests
-  test:
-    runs-on: ubuntu-latest
-    steps:
-    - name: Checkout
-      uses: actions/checkout@v4
-    - name: Set up Python 3.13.1
-      uses: actions/setup-python@v5
-      with:
-        python-version: "3.13.1"
-    - name: Install dependencies
-      run: |
-        cd app
-        python -m pip install --upgrade pip
-        pip install pytest coverage
-        pip install -r requirements.txt
-    - name: Run pytest
-      run: cd app && coverage run -m pytest .
-    - name: Create code coverage report
-      run: cd app && coverage html
-    - name: Upload coverage report
-      uses: actions/upload-artifact@v4
-      with:
-        name: coverage
-        path: app/htmlcov
-        retention-days: 30
-
-
-  # Build and push containers to docker
+  # Build Docker image and save as artifact
   docker:
     runs-on: ubuntu-latest
 
     steps:
     - name: Checkout
       uses: actions/checkout@v4
-    - name: Set up QEMU
-      uses: docker/setup-qemu-action@v3
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
-    - name: Login to Docker Hub
-      uses: docker/login-action@v3
-      with:
-        username: ${{ secrets.DOCKERHUB_USERNAME }}
-        password: ${{ secrets.DOCKERHUB_TOKEN }}
-    - name: Docker meta
-      id: meta
-      uses: docker/metadata-action@v5
-      with:
-        images: dgarciabriseno/hv-coordinator
-        # generate Docker tags based on the tagged release
-        tags: type=semver,pattern={{version}}
-    - name: Build and push Docker images
+    - name: Build and load Docker image
       uses: docker/build-push-action@v5.3.0
       with:
         # Build's context is the set of files located in the specified PATH or URL
         context: app
-        # List of target platforms for build
-        platforms: linux/amd64,linux/arm64
-        # List of tags
-        tags: ${{ steps.meta.outputs.tags }}
-        labels: ${{ steps.meta.outputs.labels }}
-        # Only push containers on version tags
-        push: ${{ github.event_name == 'push' && github.ref_type == 'tag'}}
+        # Build for single platform to enable loading
+        platforms: linux/amd64
+        # Load the image into Docker daemon
+        load: true
+        push: false
+        tags: hv-coordinator:buildtest
+    - name: Save Docker image
+      run: docker save hv-coordinator:buildtest -o /tmp/docker-image.tar
+    - name: Upload Docker image artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: docker-image
+        path: /tmp/docker-image.tar
+        retention-days: 1
+
+
+  # Test inside Docker container
+  docker-test:
+    runs-on: ubuntu-latest
+    needs: docker
+
+    steps:
+    - name: Download Docker image artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: docker-image
+        path: /tmp
+    - name: Load Docker image
+      run: docker load -i /tmp/docker-image.tar
+    - name: Run tests in container
+      run: |
+        docker run --name test-container \
+          --entrypoint sh \
+          -e COVERAGE_FILE=/tmp/.coverage \
+          hv-coordinator:buildtest \
+          -c "
+            mamba run -n coordinator pip install -r requirements-dev.txt
+            mamba run -n coordinator python -m coverage run -m pytest .
+            mamba run -n coordinator python -m coverage html -d /tmp/htmlcov
+          "
+    - name: Copy coverage report from container
+      run: docker cp test-container:/tmp/htmlcov ./coverage-output
+    - name: Remove container
+      run: docker rm test-container
+    - name: Upload coverage report
+      uses: actions/upload-artifact@v4
+      with:
+        name: docker-coverage
+        path: coverage-output
+        retention-days: 30
 

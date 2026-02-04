@@ -10,13 +10,13 @@ API is meant to run in parallel with Helioviewer.
 ## Usage
 Running with docker:
 ```
-docker run --rm -t dgarciabriseno/hv-coordinator
+docker run --rm -t ghcr.io/helioviewer-project/coordinator
 ```
 
 Running manually with python
 ```
 pip install -r requirements.txt
-python -m flask --app main run
+python -m fastapi run main.py
 ```
 
 ## Routes
@@ -65,12 +65,12 @@ of the system.
 
 ```json
 {
-    coordinates: [
+    "coordinates": [
         {
-            x: number in kilometers,
-            y: number in kilometers,
-            z: number in kilometers,
-            time: string (Y-m-d H:M:S)
+            "x": number in kilometers,
+            "y": number in kilometers,
+            "z": number in kilometers,
+            "time": string (Y-m-d H:M:S)
         },
         ...
     ]
@@ -81,12 +81,12 @@ of the system.
 Returns the same format, but with the point in the new coordinate frame
 ```json
 {
-    coordinates: [
+    "coordinates": [
         {
-            x: number,
-            y: number,
-            z: number,
-            time: string (Y-m-d H:M:S)
+            "x": number,
+            "y": number,
+            "z": number,
+            "time: string (Y-m-d H:M:S)
         },
         ...
     ]
