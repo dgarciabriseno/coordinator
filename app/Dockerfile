@@ -53,4 +53,4 @@ HEALTHCHECK --interval=2s --timeout=10s \
 
 ENTRYPOINT ["/opt/conda/envs/coordinator/bin/python"]
 
-CMD ["-m", "fastapi", "run", "--workers", "4", "--port", "80", "main.py"]
+CMD ["-m", "fastapi", "run", "--workers", "4", "--port", "8000", "main.py"]

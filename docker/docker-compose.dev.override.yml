@@ -7,4 +7,4 @@ services:
   app:
     volumes:
       - ../app:/home/nonroot/app
-    command: ["-m", "fastapi", "dev", "--host", "0.0.0.0", "--port", "80", "main.py"]
+    command: ["-m", "fastapi", "dev", "--host", "0.0.0.0", "--port", "8000", "main.py"]
